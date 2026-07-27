@@ -55,7 +55,7 @@ app = FastAPI(
     description="INT8 Quantized DINOv2 Inference Endpoint"
 )
 
-# Enable CORS so browser apps / Swagger docs can connect seamlessly
+# Enable CORS (Cross-Origin Resource Sharing)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
