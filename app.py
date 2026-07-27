@@ -6,12 +6,18 @@ import uvicorn
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-# Added relative server URL so Swagger UI uses HTTPS on Render
+# Explicitly define HTTPS server URL for Render
 app = FastAPI(
     title="DINOv2 Brain Tumor API",
-    servers=[{"url": "/", "description": "Default server"}]
+    servers=[
+        {
+            "url": "https://dinov2-brain-tumor-api.onrender.com",
+            "description": "Production Server (HTTPS)"
+        }
+    ]
 )
 
+# Open CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,6 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Load lightweight ONNX model
 session = ort.InferenceSession("model.onnx")
 
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -39,12 +46,14 @@ async def predict_mri(file: UploadFile = File(...)):
         if img is None:
             raise HTTPException(status_code=400, detail="Invalid image file.")
             
+        # Image preprocessing
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = cv2.resize(img, (224, 224))
         img = img.astype(np.float32) / 255.0
         img = (img - MEAN) / STD
         img_tensor = np.transpose(img, (2, 0, 1))[np.newaxis, :]
         
+        # Inference via ONNX
         outputs = session.run(None, {"input": img_tensor})
         prob = float(outputs[0][0][0])
         
@@ -60,10 +69,4 @@ async def predict_mri(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=port, 
-        proxy_headers=True, 
-        forwarded_allow_ips="*"
-    )
+    uvicorn.run(app, host="0.0.0.0", port=port)
