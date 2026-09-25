@@ -1,6 +1,7 @@
 import os
 import torch
 import torch.nn as nn
+import onnx
 from onnxruntime.quantization import quantize_dynamic, QuantType
 
 # ================= 1. MODEL ARCHITECTURE =================
@@ -9,11 +10,9 @@ class DINOv2Classifier(nn.Module):
         super().__init__()
         self.backbone = backbone_model
         
+        # 100% Frozen Backbone (~21M parameters locked)
         for param in self.backbone.parameters():
             param.requires_grad = False
-            
-        for param in self.backbone.blocks[-2:].parameters():
-            param.requires_grad = True
             
         self.classifier = nn.Sequential(
             nn.Linear(384, 128),
@@ -38,7 +37,8 @@ class DINOv2DeploymentWrapper(nn.Module):
 
 # ================= 2. LOCAL FILE PATH RESOLUTION =================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CKPT_PATH = os.path.join(SCRIPT_DIR, "dinov2_seed_12.pth")
+# Updated to Seed 23 checkpoint
+CKPT_PATH = os.path.join(SCRIPT_DIR, "dinov2_seed_23.pth")
 
 TEMP_ONNX_PATH = os.path.join(SCRIPT_DIR, "dinov2_temp.onnx")
 FINAL_ONNX_PATH = os.path.join(SCRIPT_DIR, "dinov2_mri_int8.onnx")
@@ -48,7 +48,7 @@ def export_local_checkpoint():
 
     if not os.path.exists(CKPT_PATH):
         raise FileNotFoundError(
-            f"❌ Could not find 'dinov2_seed_12.pth' in your working directory:\n"
+            f"❌ Could not find 'dinov2_seed_23.pth' in your working directory:\n"
             f"Expected Location: {CKPT_PATH}"
         )
 
@@ -68,7 +68,6 @@ def export_local_checkpoint():
 
     print(f"⚡ Exporting float32 ONNX graph to: {TEMP_ONNX_PATH}")
     
-    # Use legacy exporter (dynamo=False) & opset_version=18 to prevent shape inference corruption
     torch.onnx.export(
         export_model,
         dummy_input,
@@ -92,10 +91,16 @@ def export_local_checkpoint():
         weight_type=QuantType.QInt8
     )
 
-    if os.path.exists(TEMP_ONNX_PATH):
-        os.remove(TEMP_ONNX_PATH)
+    print("🔗 Consolidating into a single unified ONNX file...")
+    quant_model = onnx.load(FINAL_ONNX_PATH)
+    onnx.save_model(quant_model, FINAL_ONNX_PATH, save_as_external_data=False)
 
-    print(f"\n🎉 Success! Exported '{os.path.basename(FINAL_ONNX_PATH)}' into your local directory.")
+    # Clean up temporary split files
+    for temp_file in [TEMP_ONNX_PATH, f"{TEMP_ONNX_PATH}.data", f"{FINAL_ONNX_PATH}.data"]:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+
+    print(f"\n🎉 Success! Exported consolidated '{os.path.basename(FINAL_ONNX_PATH)}' into your local directory.")
 
 if __name__ == '__main__':
     export_local_checkpoint()
